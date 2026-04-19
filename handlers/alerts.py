@@ -1,10 +1,10 @@
-from aiogram import Router, F, types
+from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from keyboards import get_main_menu, get_alert_type_menu
-from db.crud import add_periodic_alert, add_threshold_alert, get_user_alerts
+from db.crud import add_periodic_alert, add_threshold_alert, get_user_alerts, delete_user_alerts, get_alert_by_id
 import re
 
 router = Router()
@@ -40,7 +40,20 @@ async def process_interval(message: Message, state: FSMContext):
         )
         await state.clear()
     except ValueError:
-        await message.answer("❌ Please send a valid number")
+        await message.answer("❌ Please send a valid number (5-1440)")
+
+@router.message(Command("cancel"))
+async def cancel_handler(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.answer("❌ Nothing to cancel.", reply_markup=get_main_menu())
+        return
+    
+    await state.clear()
+    await message.answer(
+        "✅ Operation cancelled. Returning to main menu.",
+        reply_markup=get_main_menu()
+    )
 
 @router.callback_query(F.data == "alert_threshold")
 async def alert_threshold_start(callback: CallbackQuery):
@@ -59,7 +72,7 @@ async def process_threshold_type(callback: CallbackQuery, state: FSMContext):
     
     metric_names = {
         "hashrate": "Pool Hashrate (KH/s)",
-        "difficulty": "Network Difficulty",
+        "difficulty": "Network Difficulty (G)",
         "miners": "Active Miners"
     }
     
@@ -97,7 +110,7 @@ async def process_threshold_value(message: Message, state: FSMContext):
     
     await message.answer(
         f"✅ Threshold alert set!\n"
-        f"Will notify when {metric} {operator} {value}",
+        f"Will notify when {metric} {operator} {float(value)}",
         reply_markup=get_main_menu()
     )
     await state.clear()
@@ -110,13 +123,46 @@ async def show_my_alerts(callback: CallbackQuery):
         text = "📋 *Your Alerts*\n\nNo active alerts set."
     else:
         text = "📋 *Your Active Alerts*\n\n"
-        for alert in alerts[:10]:
+        for alert in alerts:
             if alert.alert_type == 'periodic':
-                text += f"⏰ Periodic: every {alert.condition_value} min\n"
+                text += f"• ⏰ Periodic: every {alert.condition_value} min (ID: `{alert.id}`)\n"
+            else:
+                text += f"• 📊 Threshold: {alert.alert_type} (ID: `{alert.id}`)\n"
     
-    await callback.message.edit_text(
-        text,
-        parse_mode="Markdown",
-        reply_markup=get_main_menu()
-    )
+    text += "\nTo delete an alert, send: `/delete_alert <ID>`"
+    
+    try:
+        await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=get_main_menu()
+        )
+    except Exception as e:
+        if "can't parse entities" in str(e):
+            await callback.message.edit_text(
+                text.replace("*", "").replace("`", ""),
+                reply_markup=get_main_menu()
+            )
     await callback.answer()
+
+@router.message(Command("delete_alert"))
+async def delete_alert(message: Message):
+    try:
+        parts = message.text.split()
+        if len(parts) != 2:
+            await message.answer("❌ Usage: `/delete_alert <alert_id>`", parse_mode="Markdown")
+            return
+        
+        alert_id = int(parts[1])
+        
+        # Проверяем существует ли алерт
+        alert = await get_alert_by_id(alert_id, message.from_user.id)
+        
+        if alert:
+            await delete_user_alerts(message.from_user.id, alert_id)
+            await message.answer(f"✅ Alert `{alert_id}` deleted!", parse_mode="Markdown", reply_markup=get_main_menu())
+        else:
+            await message.answer(f"❌ Alert `{alert_id}` not found or doesn't belong to you.", parse_mode="Markdown", reply_markup=get_main_menu())
+            
+    except ValueError:
+        await message.answer("❌ Invalid alert ID. Use: `/delete_alert 123`", parse_mode="Markdown")

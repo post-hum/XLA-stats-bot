@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 # Используем UTC для избежания проблем с таймзонами
 scheduler = AsyncIOScheduler(timezone="UTC")
 
+# Словарь для отслеживания последних срабатываний threshold алертов
+_last_threshold_trigger = {}
+
 async def check_alerts(bot: Bot):
     try:
         data = await fetch_pool_stats()
@@ -40,30 +43,44 @@ async def check_alerts(bot: Bot):
             except Exception as e:
                 logger.error(f"Failed to send periodic alert to {alert.user_id}: {e}")
         
-        # Threshold alerts
+        # Threshold alerts - с защитой от спама
         threshold_alerts = await get_all_threshold_alerts()
         for alert in threshold_alerts:
             try:
-                current_value = {
-                    'hashrate': data.pool_hashrate_kh,
-                    'difficulty': data.network_difficulty / 1e9,
-                    'miners': data.active_miners
-                }.get(alert.metric, 0)
+                # Получаем текущее значение метрики
+                if alert.metric == 'hashrate':
+                    current_value = data.pool_hashrate_kh
+                elif alert.metric == 'difficulty':
+                    current_value = data.network_difficulty / 1e9
+                elif alert.metric == 'miners':
+                    current_value = data.active_miners
+                else:
+                    continue
                 
+                # Проверяем условие
                 triggered = False
                 if alert.operator == 'lt' and current_value < alert.value:
                     triggered = True
                 elif alert.operator == 'gt' and current_value > alert.value:
                     triggered = True
                 
-                if triggered:
+                # Проверяем, не отправляли ли уже алерт за последние 5 минут
+                import time
+                now = time.time()
+                key = f"{alert.id}_{alert.metric}"
+                last_trigger = _last_threshold_trigger.get(key, 0)
+                
+                if triggered and (now - last_trigger) > 300:  # 5 минут коолдаун
+                    _last_threshold_trigger[key] = now
                     await bot.send_message(
                         alert.user_id,
                         f"🚨 *Threshold Alert!*\n\n"
-                        f"📊 {alert.metric}: `{current_value:.2f}`\n"
-                        f"Condition: {alert.operator} {alert.value}",
+                        f"📊 `{alert.metric}`: `{current_value:.2f}`\n"
+                        f"Condition: `{alert.operator} {alert.value}`",
                         parse_mode="Markdown"
                     )
+                    logger.info(f"Threshold alert sent to {alert.user_id}: {alert.metric} {alert.operator} {alert.value}")
+                    
             except Exception as e:
                 logger.error(f"Failed to process threshold alert {alert.id}: {e}")
     except Exception as e:
