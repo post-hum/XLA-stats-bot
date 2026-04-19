@@ -165,4 +165,3 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 
 **❤️ Thanks for using XLA Stats Bot!**
-```
