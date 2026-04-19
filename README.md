@@ -127,11 +127,6 @@ Send: SvkFweFR7GeAGus6pt7jpg5ZYEvZgqjaUEnYnkqqBRQg57LUuKCMY849e79oVsmDbH9jYH5BVy
 1. Click "⏰ Periodic Alert"
 2. Send interval in minutes (5-1440)
 
-### Set threshold alert
-1. Click "📈 Threshold Alert"
-2. Choose metric (hashrate/difficulty/miners)
-3. Send condition: `lt:1000` or `gt:5000`
-
 ### Delete an alert
 ```
 /delete_alert 2
